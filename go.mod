@@ -1,4 +1,4 @@
-module kafka-testing-go
+module github.com/tmstff/kafka-testing-go
 
 go 1.13
 
