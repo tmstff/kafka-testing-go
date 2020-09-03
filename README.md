@@ -7,7 +7,7 @@ Uses testcontainers-go to start a docker container running zookeeper and a kafka
 
     ctx := context.Background()
     
-    kafkaURL, terminateKafka, err := testutil.StartKafkaContainer(ctx)
+    kafkaURL, terminateKafka, err := kafkatesting.StartKafkaContainer(ctx)
 
     if err != nil {
         // handle error
