@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 	"github.com/testcontainers/testcontainers-go"
+	"io/ioutil"
 	"os"
 	"strings"
 )
@@ -47,16 +48,21 @@ func StartKafkaWithEnv(ctx context.Context, env map[string]string) (kafkaUrl str
 
 	identifier := strings.ToLower(uuid.New().String())
 
-	composeFilePaths := []string{"docker-compose.yml"}
+	composeFileName, deleteTempFile, err := createTmpDockerComposeYml()
+	if err != nil {
+		return "", nil, err
+	}
+	defer deleteTempFile()
 
-	compose := testcontainers.NewLocalDockerCompose(composeFilePaths, identifier)
+	compose := testcontainers.NewLocalDockerCompose([]string{composeFileName}, identifier)
 
 	envWithDefaults := map[string]string{
 		"KAFKA_PORT_EXPOSITION":              portExpositionString,
 		"KAFKA_EXTERNAL_ADVERTISED_LISTENER": kafkaExternalAdvertisedListener,
+		"KAFKA_AUTO_CREATE_TOPICS_ENABLE": "true",
 	}
 
-	for k,v := range env {
+	for k, v := range env {
 		envWithDefaults[k] = v
 	}
 
@@ -66,7 +72,7 @@ func StartKafkaWithEnv(ctx context.Context, env map[string]string) (kafkaUrl str
 		Invoke()
 	if execError.Error != nil {
 		logrus.Errorf("%s failed with\nstdout:\n%v\nstderr:\n%v", execError.Command, execError.Stdout, execError.Stderr)
-		return "", nil, fmt.Errorf("could not run compose file: %v - %w", composeFilePaths, execError.Error)
+		return "", nil, fmt.Errorf("could not run compose file: %v - %w", []string{composeFileName}, execError.Error)
 	}
 
 	logrus.Infof("kafka started at %s", kafkaExternalAdvertisedListener)
@@ -75,8 +81,41 @@ func StartKafkaWithEnv(ctx context.Context, env map[string]string) (kafkaUrl str
 		execError := compose.Down()
 		if execError.Error != nil {
 			logrus.Errorf("%s failed with\nstdout:\n%v\nstderr:\n%v", execError.Command, execError.Stdout, execError.Stderr)
-			return fmt.Errorf("'docker-compose down' failed for compose file: %v - %w", composeFilePaths, err)
+			return fmt.Errorf("'docker-compose down' failed for compose file: %v - %w", []string{composeFileName}, err)
 		}
 		return nil
 	}, nil
+}
+
+func createTmpDockerComposeYml() (composeFileName string, deleteTempFile func(), err error) {
+	tmpDirName, err := ioutil.TempDir(os.TempDir(), "kafka-testing-go") // create temp dir to avoid .env confusion
+	if err != nil {
+		return "", nil, fmt.Errorf("cannot create temporary directory: %w", err)
+	}
+	tmpFile, err := ioutil.TempFile(tmpDirName, "docker-compose-*.yml")
+	if err != nil {
+		return "", nil, fmt.Errorf("cannot create temporary file: %w", err)
+	}
+	defer tmpFile.Close()
+
+	composeFileName = tmpFile.Name()
+
+	deleteTempFile = func() {
+		err := os.Remove(composeFileName)
+		if err != nil {
+			logrus.Warnf("could not remove temp file %s", composeFileName)
+		}
+		err = os.Remove(tmpDirName)
+		if err != nil {
+			logrus.Warnf("could not remove temp dir %s", tmpDirName)
+		}
+	}
+
+	content := []byte(DockerComposeFile)
+	_, err = tmpFile.Write(content)
+	if err != nil {
+		return "", nil, fmt.Errorf("cannot write to file '%s': %w", composeFileName, err)
+	}
+
+	return composeFileName, deleteTempFile, nil
 }
