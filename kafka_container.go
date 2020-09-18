@@ -12,15 +12,15 @@ import (
 )
 
 // deprecated
-func StartKafkaContainer(ctx context.Context) (kafkaUrl string, terminateFunction func(context.Context) error, err error) {
+func StartKafkaContainer(ctx context.Context) (kafkaUrl string, terminateFunction func(context.Context), err error) {
 	return StartKafkaWithEnv(ctx, map[string]string{})
 }
 
-func StartKafka(ctx context.Context) (kafkaUrl string, terminateFunction func(context.Context) error, err error) {
+func StartKafka(ctx context.Context) (kafkaUrl string, terminateFunction func(context.Context), err error) {
 	return StartKafkaWithEnv(ctx, map[string]string{})
 }
 
-func StartKafkaWithEnv(ctx context.Context, env map[string]string) (kafkaUrl string, terminateFunction func(context.Context) error, err error) {
+func StartKafkaWithEnv(ctx context.Context, env map[string]string) (kafkaUrl string, terminateFunction func(context.Context), err error) {
 	var containerHost string
 	var kafkaPortExpositionHost string
 	if val, exists := os.LookupEnv("HOST_IP"); exists {
@@ -48,11 +48,11 @@ func StartKafkaWithEnv(ctx context.Context, env map[string]string) (kafkaUrl str
 
 	identifier := strings.ToLower(uuid.New().String())
 
-	composeFileName, deleteTempFile, err := createTmpDockerComposeYml()
+	composeFileName, deleteTempDockerComposeYml, err := createTmpDockerComposeYml()
 	if err != nil {
 		return "", nil, err
 	}
-	defer deleteTempFile()
+
 	logrus.Infof("docker-compose.yml: %s", composeFileName)
 
 	compose := testcontainers.NewLocalDockerCompose([]string{composeFileName}, identifier)
@@ -71,20 +71,20 @@ func StartKafkaWithEnv(ctx context.Context, env map[string]string) (kafkaUrl str
 		WithCommand([]string{"up", "-d"}).
 		WithEnv(envWithDefaults).
 		Invoke()
-	if execError.Error != nil {
-		logrus.Errorf("%s failed with\nstdout:\n%v\nstderr:\n%v", execError.Command, execError.Stdout, execError.Stderr)
-		return "", nil, fmt.Errorf("could not run compose file: %v - %w", []string{composeFileName}, execError.Error)
+	err = execError.Error
+	if err != nil {
+		return "", nil, fmt.Errorf("could not run compose file: %v - %w\nstdout:\n%v\nstderr:\n%v", []string{composeFileName}, err, execError.Stdout, execError.Stderr)
 	}
 
 	logrus.Infof("kafka started at %s", kafkaExternalAdvertisedListener)
 
-	return kafkaExternalAdvertisedListener, func(ctx context.Context) error {
+	return kafkaExternalAdvertisedListener, func(ctx context.Context) {
 		execError := compose.Down()
-		if execError.Error != nil {
-			logrus.Errorf("%s failed with\nstdout:\n%v\nstderr:\n%v", execError.Command, execError.Stdout, execError.Stderr)
-			return fmt.Errorf("'docker-compose down' failed for compose file: %v - %w", []string{composeFileName}, err)
+		err := execError.Error
+		if err != nil {
+			logrus.Errorf("'docker-compose down' failed for compose file: %v - %w\nstdout:\n%v\nstderr:\n%v", []string{composeFileName}, err, execError.Stdout, execError.Stderr)
 		}
-		return nil
+		deleteTempDockerComposeYml()
 	}, nil
 }
 
@@ -101,6 +101,12 @@ func createTmpDockerComposeYml() (composeFileName string, deleteTempFile func(),
 
 	composeFileName = tmpFile.Name()
 
+	content := []byte(DockerComposeFile)
+	_, err = tmpFile.Write(content)
+	if err != nil {
+		return "", nil, fmt.Errorf("cannot write to file '%s': %w", composeFileName, err)
+	}
+
 	deleteTempFile = func() {
 		err := os.Remove(composeFileName)
 		if err != nil {
@@ -110,12 +116,6 @@ func createTmpDockerComposeYml() (composeFileName string, deleteTempFile func(),
 		if err != nil {
 			logrus.Warnf("could not remove temp dir %s", tmpDirName)
 		}
-	}
-
-	content := []byte(DockerComposeFile)
-	_, err = tmpFile.Write(content)
-	if err != nil {
-		return "", nil, fmt.Errorf("cannot write to file '%s': %w", composeFileName, err)
 	}
 
 	return composeFileName, deleteTempFile, nil
