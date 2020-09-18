@@ -53,6 +53,7 @@ func StartKafkaWithEnv(ctx context.Context, env map[string]string) (kafkaUrl str
 		return "", nil, err
 	}
 	defer deleteTempFile()
+	logrus.Infof("docker-compose.yml: %s", composeFileName)
 
 	compose := testcontainers.NewLocalDockerCompose([]string{composeFileName}, identifier)
 
